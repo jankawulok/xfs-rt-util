@@ -1,6 +1,30 @@
 # xfs-rt-util
 
-A utility for managing file usage on XFS filesystems, specifically targeting files related to the realtime (`FS_XFLAG_REALTIME`) attribute.
+A utility for managing file usage on XFS filesystems, specifically targeting files related to the realtime (`FS_XFLAG_REALTIME`) attribute, often used in tiered SSD/HDD storage environments.
+
+## Background: XFS Realtime and SSD/HDD Tiering
+
+**XFS Realtime Devices:** XFS filesystems can optionally include a "realtime subvolume" or "realtime device". This is often a separate physical device (like an HDD) formatted specifically for storing large, sequential data files (e.g., video/audio streams, large logs). Key characteristics include:
+    *   **Pre-allocation:** Space is typically pre-allocated in large, contiguous "extents".
+    *   **Fixed Extent Size:** Helps avoid fragmentation for large files.
+    *   **Performance:** Optimized for high-throughput sequential I/O, often sacrificing some random I/O performance or metadata operation speed compared to the primary XFS data device.
+    *   **`FS_XFLAG_REALTIME`:** Files intended for the realtime device are marked with this flag. The filesystem directs their data blocks to be allocated on the configured realtime device.
+
+**Tiered Storage (SSD + HDD):** A common storage setup involves using:
+    *   **SSDs:** For the operating system, XFS metadata, XFS logs (for speed and responsiveness), and potentially frequently accessed or performance-sensitive regular data.
+    *   **HDDs:** For bulk data storage capacity, often configured as the XFS realtime device due to its suitability for large files and lower cost per GB.
+
+**The Problem This Tool Addresses:** In such tiered setups, regular files (those *without* the `FS_XFLAG_REALTIME` flag) can accumulate on the primary XFS data partition, which might reside on the valuable, faster SSD storage. If these non-realtime files grow large or numerous, they can consume SSD space needed for metadata, logs, or other critical data, even if the large HDD realtime device has ample free space. There's often a need to identify and manage these non-realtime files on the SSD partition.
+
+**How `xfs-rt-util` Helps:** This utility scans a specified path (expected to be on the *SSD* XFS partition) and identifies files *without* the `FS_XFLAG_REALTIME` flag. If the total size of these files exceeds a configured threshold, it selects candidates (oldest modification time, largest size first) for action.
+    *   **Identification:** It lists these candidates, helping administrators understand which non-realtime files are consuming significant space on the SSD partition.
+    *   **Marking (`--move-files`):** The `--move-files` option performs an *in-place replacement* of the selected files on the *same filesystem* (the SSD partition) and sets the `FS_XFLAG_REALTIME` flag on the new file.
+        *   **Important:** This action **does not physically move the file to the separate HDD realtime device.**
+        *   It marks the file according to policy. This marking can be used by other scripts or manual processes to later migrate the file to the actual realtime HDD device if desired.
+        *   It may change how blocks are allocated for this file *on the SSD* going forward.
+        *   The copy-replace *might* help defragment space *on the SSD* if the original file was fragmented.
+    *   **Reclaiming Space (`fstrim`):** After files are potentially replaced (and the old blocks deallocated), `fstrim` is called (if `--move-files` was used) to signal the underlying SSD to reclaim the now-unused blocks.
+
 
 ## Purpose
 
